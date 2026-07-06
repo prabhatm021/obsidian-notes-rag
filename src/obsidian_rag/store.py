@@ -58,7 +58,28 @@ class VectorStore:
             CREATE INDEX IF NOT EXISTS idx_chunks_file_path
             ON chunks(file_path)
         """)
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS indexed_files (
+                file_path TEXT PRIMARY KEY,
+                mtime REAL NOT NULL
+            )
+        """)
         self.db.commit()
+
+    def get_file_mtimes(self) -> Dict[str, float]:
+        """Get the last-indexed mtime for every tracked file."""
+        with self._lock:
+            rows = self.db.execute("SELECT file_path, mtime FROM indexed_files").fetchall()
+            return {row[0]: row[1] for row in rows}
+
+    def set_file_mtime(self, file_path: str, mtime: float) -> None:
+        """Record the mtime a file was last indexed at."""
+        with self._lock:
+            self.db.execute(
+                "INSERT OR REPLACE INTO indexed_files (file_path, mtime) VALUES (?, ?)",
+                (file_path, mtime),
+            )
+            self.db.commit()
 
     def _try_load_vec_table(self) -> None:
         """Try to detect the dimension from an existing vec table."""
@@ -136,7 +157,8 @@ class VectorStore:
                 placeholders = ",".join("?" * len(ids))
                 self.db.execute(f"DELETE FROM chunks_vec WHERE id IN ({placeholders})", ids)
                 self.db.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", ids)
-                self.db.commit()
+            self.db.execute("DELETE FROM indexed_files WHERE file_path = ?", (file_path,))
+            self.db.commit()
 
     def search(
         self,
@@ -228,6 +250,7 @@ class VectorStore:
         """Clear all data."""
         with self._lock:
             self.db.execute("DELETE FROM chunks")
+            self.db.execute("DELETE FROM indexed_files")
             if self._dim is not None:
                 self.db.execute("DROP TABLE IF EXISTS chunks_vec")
                 self._dim = None

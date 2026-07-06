@@ -238,49 +238,15 @@ def reindex(clear: bool = False, path_filter: Optional[str] = None) -> dict:
 
     indexer = VaultIndexer(vault_path=config.vault_path, embedder=embedder, config=config.indexer)
 
-    if clear:
-        store.clear()
-
-    # Get files to index
-    files = list(indexer.iter_markdown_files())
-
-    # Apply path filter if specified
-    if path_filter:
-        files = [f for f in files if str(f.relative_to(indexer.vault_path)).startswith(path_filter)]
-
-    # Index files
-    chunk_count = 0
-    file_count = 0
-    errors = []
-    batch_chunks = []
-    batch_embeddings = []
-    batch_size = 50
-
-    for file_path in files:
-        try:
-            for chunk, embedding in indexer.index_file(file_path):
-                batch_chunks.append(chunk)
-                batch_embeddings.append(embedding)
-                chunk_count += 1
-
-                if len(batch_chunks) >= batch_size:
-                    store.upsert_batch(batch_chunks, batch_embeddings)
-                    batch_chunks = []
-                    batch_embeddings = []
-
-            file_count += 1
-        except Exception as e:
-            errors.append({"file": str(file_path), "error": str(e)})
-
-    # Insert remaining
-    if batch_chunks:
-        store.upsert_batch(batch_chunks, batch_embeddings)
+    result = indexer.index_vault(store, clear=clear, path_filter=path_filter)
 
     return {
-        "files_indexed": file_count,
-        "chunks_created": chunk_count,
+        "files_indexed": result["files_indexed"],
+        "files_skipped": result["files_skipped"],
+        "files_removed": result["files_removed"],
+        "chunks_created": result["chunks_created"],
         "total_in_store": store.get_stats()["count"],
-        "errors": errors if errors else None,
+        "errors": result["errors"] if result["errors"] else None,
         "path_filter": path_filter,
         "cleared": clear
     }

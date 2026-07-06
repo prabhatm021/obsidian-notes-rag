@@ -8,12 +8,15 @@ import uuid
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator, Optional, List, Dict, Tuple
+from typing import Iterator, Optional, List, Dict, Tuple, TYPE_CHECKING
 
 import httpx
 import yaml
 from chonkie import RecursiveChunker
 from chonkie.types.recursive import RecursiveLevel, RecursiveRules
+
+if TYPE_CHECKING:
+    from .store import VectorStore
 
 
 @dataclass
@@ -598,11 +601,10 @@ class VaultIndexer:
         content = file_path.read_text(encoding="utf-8")
         rel_path = str(file_path.relative_to(self.vault_path))
         chunks = chunk_markdown(content, rel_path, config=self.config)
-        results = []
-        for chunk in chunks:
-            embedding = self.embedder.embed(chunk.content)
-            results.append((chunk, embedding))
-        return results
+        if not chunks:
+            return []
+        embeddings = self.embedder.embed_batch([chunk.content for chunk in chunks])
+        return list(zip(chunks, embeddings))
 
     def index_all(self) -> Iterator[Tuple[Chunk, List[float]]]:
         """Index all files in the vault."""
@@ -612,3 +614,72 @@ class VaultIndexer:
                     yield chunk, embedding
             except Exception as e:
                 print(f"Error indexing {file_path}: {e}")
+
+    def index_vault(
+        self,
+        store: "VectorStore",
+        clear: bool = False,
+        path_filter: Optional[str] = None,
+        on_file=None,
+    ) -> Dict:
+        """Incrementally index the vault into `store`, skipping unchanged files.
+
+        Compares each file's mtime against the mtime recorded at last index time
+        (persisted in the store) so unchanged files are skipped entirely, and
+        embeds each file's chunks in a single batched call. Files that have been
+        deleted (or fall outside `path_filter`) are removed from the store.
+        """
+        if clear:
+            store.clear()
+
+        files = list(self.iter_markdown_files())
+        if path_filter:
+            files = [f for f in files if str(f.relative_to(self.vault_path)).startswith(path_filter)]
+
+        current_rel_paths = {str(f.relative_to(self.vault_path)): f for f in files}
+        stored_mtimes = store.get_file_mtimes()
+
+        # Remove files that no longer exist (or no longer match the filter).
+        removed = []
+        for rel_path in stored_mtimes:
+            if path_filter and not rel_path.startswith(path_filter):
+                continue
+            if rel_path not in current_rel_paths:
+                store.delete_by_file(rel_path)
+                removed.append(rel_path)
+
+        file_count = 0
+        skipped_count = 0
+        chunk_count = 0
+        errors = []
+
+        for rel_path, file_path in current_rel_paths.items():
+            mtime = file_path.stat().st_mtime
+            if not clear and stored_mtimes.get(rel_path) == mtime:
+                skipped_count += 1
+                if on_file:
+                    on_file(rel_path)
+                continue
+
+            try:
+                store.delete_by_file(rel_path)
+                results = self.index_file(file_path)
+                if results:
+                    chunks, embeddings = zip(*results)
+                    store.upsert_batch(list(chunks), list(embeddings))
+                    chunk_count += len(chunks)
+                store.set_file_mtime(rel_path, mtime)
+                file_count += 1
+            except Exception as e:
+                errors.append({"file": rel_path, "error": str(e)})
+
+            if on_file:
+                on_file(rel_path)
+
+        return {
+            "files_indexed": file_count,
+            "files_skipped": skipped_count,
+            "files_removed": len(removed),
+            "chunks_created": chunk_count,
+            "errors": errors,
+        }

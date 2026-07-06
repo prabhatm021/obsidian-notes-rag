@@ -382,9 +382,8 @@ def index(ctx, clear, path_filter):
 
     if clear:
         click.echo("Clearing existing index...")
-        store.clear()
 
-    # Count files first
+    # Count files first (for progress display only; index_vault re-scans and filters internally)
     files = list(indexer.iter_markdown_files())
     click.echo(f"Found {len(files)} markdown files")
 
@@ -392,36 +391,20 @@ def index(ctx, clear, path_filter):
         files = [f for f in files if str(f.relative_to(indexer.vault_path)).startswith(path_filter)]
         click.echo(f"Filtered to {len(files)} files matching '{path_filter}'")
 
-    # Index with progress
-    chunk_count = 0
-    batch_chunks = []
-    batch_embeddings = []
-    batch_size = 50
+    with click.progressbar(length=len(files), label="Indexing") as bar:
+        result = indexer.index_vault(
+            store, clear=clear, path_filter=path_filter, on_file=lambda _: bar.update(1)
+        )
 
-    with click.progressbar(files, label="Indexing") as bar:
-        for file_path in bar:
-            try:
-                for chunk, embedding in indexer.index_file(file_path):
-                    batch_chunks.append(chunk)
-                    batch_embeddings.append(embedding)
-                    chunk_count += 1
-
-                    # Batch insert
-                    if len(batch_chunks) >= batch_size:
-                        store.upsert_batch(batch_chunks, batch_embeddings)
-                        batch_chunks = []
-                        batch_embeddings = []
-
-            except Exception as e:
-                click.echo(f"\nError indexing {file_path}: {e}", err=True)
-
-    # Insert remaining
-    if batch_chunks:
-        store.upsert_batch(batch_chunks, batch_embeddings)
+    for err in result["errors"]:
+        click.echo(f"\nError indexing {err['file']}: {err['error']}", err=True)
 
     embedder.close()
 
-    click.echo(f"\nIndexed {chunk_count} chunks from {len(files)} files")
+    click.echo(
+        f"\nIndexed {result['chunks_created']} chunks from {result['files_indexed']} changed files "
+        f"({result['files_skipped']} unchanged, {result['files_removed']} removed)"
+    )
     click.echo(f"Total documents in store: {store.get_stats()['count']}")
 
 
