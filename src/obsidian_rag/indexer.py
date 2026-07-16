@@ -551,7 +551,7 @@ class VaultIndexer:
     def __init__(
         self,
         vault_path,
-        embedder: Embedder,
+        embedder: Optional[Embedder] = None,
         exclude_patterns: Optional[List[str]] = None,
         config: Optional[IndexerConfig] = None,
     ):
@@ -598,6 +598,8 @@ class VaultIndexer:
 
     def index_file(self, file_path: Path) -> List[Tuple[Chunk, List[float]]]:
         """Index a single file, returning chunks with embeddings."""
+        if self.embedder is None:
+            raise ValueError("VaultIndexer requires an embedder to index files")
         content = file_path.read_text(encoding="utf-8")
         rel_path = str(file_path.relative_to(self.vault_path))
         chunks = chunk_markdown(content, rel_path, config=self.config)
@@ -605,6 +607,27 @@ class VaultIndexer:
             return []
         embeddings = self.embedder.embed_batch([chunk.content for chunk in chunks])
         return list(zip(chunks, embeddings))
+
+    def check_drift(self, store: "VectorStore") -> Dict:
+        """Compare the vault on disk against what the store has indexed.
+
+        Read-only: never writes to the store. Flags files that changed since
+        they were last indexed (by either a full index or the watcher) and
+        files the store still tracks that no longer exist in the vault.
+        """
+        files = {str(f.relative_to(self.vault_path)): f for f in self.iter_markdown_files()}
+        tracked = store.get_file_mtimes()
+
+        stale_files = [p for p, f in files.items() if tracked.get(p) != f.stat().st_mtime]
+        ghost_files = [p for p in tracked if p not in files]
+
+        return {
+            "vault_files": len(files),
+            "tracked_files": len(tracked),
+            "stale_files": stale_files,
+            "ghost_files": ghost_files,
+            "in_sync": not stale_files and not ghost_files,
+        }
 
     def index_all(self) -> Iterator[Tuple[Chunk, List[float]]]:
         """Index all files in the vault."""

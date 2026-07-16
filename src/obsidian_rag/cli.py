@@ -646,6 +646,49 @@ def stats(ctx):
 
 
 @main.command()
+@click.pass_context
+def status(ctx):
+    """Check whether the index is in sync with the vault and the embedder is reachable."""
+    vault_path = ctx.obj["vault"]
+    data_path = ctx.obj["data"]
+    provider = ctx.obj["provider"]
+    ollama_url = ctx.obj["ollama_url"]
+    lmstudio_url = ctx.obj["lmstudio_url"]
+    ollama_api_key = ctx.obj["ollama_api_key"]
+    lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    config = ctx.obj["config"]
+
+    if not vault_path:
+        click.echo("No vault path configured. Run 'obsidian-rag setup' first.", err=True)
+        sys.exit(1)
+
+    if provider == "ollama":
+        embedder_reachable = is_ollama_running(ollama_url, ollama_api_key)
+    elif provider == "lmstudio":
+        embedder_reachable = is_lmstudio_running(lmstudio_url, lmstudio_api_key)
+    else:
+        embedder_reachable = bool(config.get_openai_api_key())
+
+    store = VectorStore(data_path=data_path)
+    indexer = VaultIndexer(vault_path=vault_path, config=config.indexer)
+    drift = indexer.check_drift(store)
+
+    click.echo(f"Provider: {provider} ({'reachable' if embedder_reachable else 'UNREACHABLE'})")
+    click.echo(f"Total chunks in store: {store.get_stats()['count']}")
+    click.echo(f"Vault files: {drift['vault_files']}   Tracked: {drift['tracked_files']}")
+
+    if drift["in_sync"]:
+        click.echo("In sync: no stale or ghost files.")
+    else:
+        click.echo(f"Stale (edited since last index): {len(drift['stale_files'])}")
+        for p in drift["stale_files"][:10]:
+            click.echo(f"  - {p}")
+        click.echo(f"Ghost (indexed but missing from vault): {len(drift['ghost_files'])}")
+        for p in drift["ghost_files"][:10]:
+            click.echo(f"  - {p}")
+
+
+@main.command()
 @click.option("--debounce", default=2.0, help="Seconds to wait before processing changes")
 @click.pass_context
 def watch(ctx, debounce):

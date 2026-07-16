@@ -8,7 +8,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 from .config import load_config, Config
-from .indexer import create_embedder, Embedder, VaultIndexer
+from .indexer import create_embedder, Embedder, VaultIndexer, is_lmstudio_running, is_ollama_running
 from .store import VectorStore
 
 # Create MCP server
@@ -216,6 +216,48 @@ def get_stats() -> dict:
     """
     store = get_store()
     return store.get_stats()
+
+
+@mcp.tool()
+def health_check() -> dict:
+    """Check whether the index is in sync with the vault and the embedding backend is reachable.
+
+    Read-only: does not modify the index. Compares every file in the vault against
+    what the store has recorded as indexed (via the same mtime tracking `reindex`
+    uses), so it catches both files the watcher/reindex missed and stale entries
+    left behind by deleted files.
+
+    Returns:
+        Provider connectivity, chunk/file counts, and any stale or ghost files found
+    """
+    config = get_config()
+    store = get_store()
+
+    if not config.vault_path:
+        return {"error": "No vault path configured. Run 'obsidian-rag setup' first."}
+
+    if config.provider == "ollama":
+        embedder_reachable = is_ollama_running(config.ollama_url, config.get_ollama_api_key())
+    elif config.provider == "lmstudio":
+        embedder_reachable = is_lmstudio_running(config.lmstudio_url, config.get_lmstudio_api_key())
+    else:
+        embedder_reachable = bool(config.get_openai_api_key())
+
+    indexer = VaultIndexer(vault_path=config.vault_path, config=config.indexer)
+    drift = indexer.check_drift(store)
+
+    return {
+        "provider": config.provider,
+        "embedder_reachable": embedder_reachable,
+        "total_chunks": store.get_stats()["count"],
+        "vault_files": drift["vault_files"],
+        "tracked_files": drift["tracked_files"],
+        "in_sync": drift["in_sync"],
+        "stale_files": len(drift["stale_files"]),
+        "stale_file_examples": drift["stale_files"][:10],
+        "ghost_files": len(drift["ghost_files"]),
+        "ghost_file_examples": drift["ghost_files"][:10],
+    }
 
 
 @mcp.tool()
