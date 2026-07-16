@@ -240,6 +240,7 @@ class NoteEventHandler(FileSystemEventHandler):
                 chunks, embeddings = zip(*results)
                 self.store.upsert_batch(list(chunks), list(embeddings))
                 logger.info(f"Indexed {len(chunks)} chunks from {rel_path}")
+            self.store.set_file_mtime(rel_path, path.stat().st_mtime)
         except Exception as e:
             logger.error(f"Error indexing {rel_path}: {e}")
             # Add to retry queue if available
