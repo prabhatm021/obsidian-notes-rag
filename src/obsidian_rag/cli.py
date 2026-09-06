@@ -723,9 +723,13 @@ def watch(ctx, debounce):
 
 
 @main.command()
-def serve():
+@click.option("--transport", default="stdio", type=click.Choice(["stdio", "sse", "streamable-http"]),
+              help="stdio for a local connector (default), streamable-http to expose over the network")
+@click.option("--host", default="127.0.0.1", help="Bind host (only used for non-stdio transport)")
+@click.option("--port", default=8000, help="Bind port (only used for non-stdio transport)")
+def serve(transport, host, port):
     """Start the MCP server (for Claude Code integration)."""
-    run_server()
+    run_server(transport=transport, host=host, port=port)
 
 
 # Service management

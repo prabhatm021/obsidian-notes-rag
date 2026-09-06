@@ -294,9 +294,17 @@ def reindex(clear: bool = False, path_filter: Optional[str] = None) -> dict:
     }
 
 
-def run_server():
-    """Run the MCP server."""
-    mcp.run(transport="stdio")
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+    """Run the MCP server.
+
+    transport "stdio" (default) is for a local Claude Desktop/Code connector.
+    "streamable-http" exposes the server over the network (e.g. via Tailscale)
+    so a remote Claude client can add it as a connector.
+    """
+    if transport != "stdio":
+        mcp.settings.host = host
+        mcp.settings.port = port
+    mcp.run(transport=transport)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
