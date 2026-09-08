@@ -11,7 +11,9 @@ lives on whichever machine runs the Claude client.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
+import os
 import sqlite3
 import struct
 import urllib.request
@@ -20,6 +22,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 
 EMBED_PREFIX_QUERY = "search_query: "  # nomic-embed expects task prefixes
+
+# When set, /search requires `Authorization: Bearer <token>`. /health stays open
+# so a local supervisor can probe liveness without holding the token; it only
+# reveals a chunk count.
+AUTH_TOKEN = os.environ.get("PHONE_RAG_TOKEN", "")
 
 
 class Index:
@@ -103,9 +110,21 @@ def make_handler(index: Index):
             else:
                 self._send(404, {"error": "not found"})
 
+        def _authorized(self) -> bool:
+            if not AUTH_TOKEN:
+                return True
+            header = self.headers.get("Authorization", "")
+            prefix = "Bearer "
+            if not header.startswith(prefix):
+                return False
+            return hmac.compare_digest(header[len(prefix):], AUTH_TOKEN)
+
         def do_POST(self):
             if self.path != "/search":
                 self._send(404, {"error": "not found"})
+                return
+            if not self._authorized():
+                self._send(401, {"error": "unauthorized"})
                 return
             length = int(self.headers.get("Content-Length") or 0)
             try:

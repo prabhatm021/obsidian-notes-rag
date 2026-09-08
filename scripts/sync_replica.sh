@@ -50,9 +50,10 @@ if ! rsync -e "ssh ${SSH_OPTS[*]}" "$EXPORT_TMP" \
 fi
 
 # The replica loads the index into memory at startup, so it keeps serving the
-# old data until restarted.
-log "restarting replica search server"
-ssh "${SSH_OPTS[@]}" "$REPLICA_HOST" '~/start_search.sh' >/dev/null 2>&1
+# old data until restarted. Only stop it here — the replica's supervisor owns
+# starting it, so there is one owner of the process and no start race.
+log "stopping replica search server so its supervisor reloads the new index"
+ssh "${SSH_OPTS[@]}" "$REPLICA_HOST" 'pkill -f "[p]hone_search_server.py"' >/dev/null 2>&1
 
 echo "$source_stamp" > "$STATE_FILE"
 rm -f "$EXPORT_TMP"

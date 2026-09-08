@@ -22,15 +22,23 @@ from mcp.server.fastmcp import FastMCP
 
 BASE_URL = os.environ.get("PHONE_RAG_URL", "http://127.0.0.1:8100").rstrip("/")
 TIMEOUT = float(os.environ.get("PHONE_RAG_TIMEOUT", "60"))
+TOKEN = os.environ.get("PHONE_RAG_TOKEN", "")
 
 mcp = FastMCP("phone-rag")
+
+
+def _headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    return headers
 
 
 def _post(path: str, payload: dict) -> dict:
     req = urllib.request.Request(
         f"{BASE_URL}{path}",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=_headers(),
     )
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         return json.load(resp)
@@ -53,6 +61,10 @@ def search_notes(query: str, limit: int = 10, note_type: Optional[str] = None) -
         payload["type"] = note_type
     try:
         return _post("/search", payload)["results"]
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return [{"error": "unauthorized: PHONE_RAG_TOKEN missing or wrong"}]
+        return [{"error": f"replica error {e.code}: {e.reason}"}]
     except urllib.error.URLError as e:
         return [{"error": f"replica unreachable at {BASE_URL}: {e}"}]
 
