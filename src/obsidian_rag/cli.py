@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import click
+import sqlite_vec
 
 # Suppress noisy HTTP logs from httpx/openai during progress bars
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -630,6 +631,60 @@ def context(ctx, note_path, limit):
         click.echo("No related notes found.")
 
     embedder.close()
+
+
+@main.command("export-portable")
+@click.argument("output_path", type=click.Path())
+@click.pass_context
+def export_portable(ctx, output_path):
+    """Export the index to a portable DB readable without the sqlite-vec extension.
+
+    Vectors normally live in a sqlite-vec virtual table, which only works where
+    that extension is installed. This writes a plain SQLite file with embeddings
+    as float32 BLOBs, so a replica (e.g. a phone) can search with numpy alone.
+    """
+    import sqlite3
+
+    src_path = Path(ctx.obj["data"]) / "obsidian_notes.db"
+    if not src_path.exists():
+        click.echo(f"No index at {src_path}", err=True)
+        sys.exit(1)
+
+    src = sqlite3.connect(str(src_path))
+    src.enable_load_extension(True)
+    sqlite_vec.load(src)
+    src.enable_load_extension(False)
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        out.unlink()
+
+    dst = sqlite3.connect(str(out))
+    dst.execute("""
+        CREATE TABLE chunks (
+            id TEXT PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            heading TEXT,
+            heading_level INTEGER,
+            type TEXT,
+            tags TEXT,
+            content TEXT NOT NULL,
+            embedding BLOB
+        )
+    """)
+    dst.execute("CREATE INDEX idx_chunks_file_path ON chunks(file_path)")
+
+    rows = src.execute("""
+        SELECT c.id, c.file_path, c.heading, c.heading_level, c.type, c.tags, c.content, v.embedding
+        FROM chunks c JOIN chunks_vec v ON v.id = c.id
+    """).fetchall()
+    dst.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    dst.commit()
+    dst.close()
+    src.close()
+
+    click.echo(f"Exported {len(rows)} chunks to {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
 
 @main.command()

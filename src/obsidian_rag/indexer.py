@@ -12,10 +12,10 @@ from typing import Iterator, Optional, List, Dict, Tuple, TYPE_CHECKING
 
 import httpx
 import yaml
-from chonkie import RecursiveChunker
-from chonkie.types.recursive import RecursiveLevel, RecursiveRules
 
 if TYPE_CHECKING:
+    from chonkie import RecursiveChunker
+    from chonkie.types.recursive import RecursiveRules
     from .store import VectorStore
 
 
@@ -214,6 +214,8 @@ def _restore_blocks(text: str) -> str:
 
 def _build_rules(cfg: IndexerConfig) -> RecursiveRules:
     """Build RecursiveRules according to heading_split_depth."""
+    from chonkie.types.recursive import RecursiveLevel, RecursiveRules
+
     levels: List[RecursiveLevel] = []
 
     heading_delimiters = [
@@ -241,6 +243,8 @@ def _build_rules(cfg: IndexerConfig) -> RecursiveRules:
 @lru_cache(maxsize=16)
 def _get_chunker(chunk_size: int, chunk_overlap: int, min_characters_per_chunk: int, heading_split_depth: int) -> RecursiveChunker:
     """Get or create a cached RecursiveChunker for the given parameters."""
+    from chonkie import RecursiveChunker
+
     cfg = IndexerConfig(heading_split_depth=heading_split_depth)
     return RecursiveChunker(
         chunk_size=chunk_size,
