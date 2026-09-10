@@ -18,13 +18,16 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+try:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as MCPServer
+except ModuleNotFoundError:  # mcp 2.x renamed FastMCP to MCPServer
+    from mcp.server.mcpserver import MCPServer
 
 BASE_URL = os.environ.get("PHONE_RAG_URL", "http://127.0.0.1:8100").rstrip("/")
 TIMEOUT = float(os.environ.get("PHONE_RAG_TIMEOUT", "60"))
 TOKEN = os.environ.get("PHONE_RAG_TOKEN", "")
 
-mcp = FastMCP("phone-rag")
+mcp = MCPServer("phone-rag")
 
 
 def _headers() -> dict:
